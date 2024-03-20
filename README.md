@@ -3,3 +3,7 @@
 # Jalankan Perintah
 ``` composer install``` dan
 ```npm install```
+
+# Untuk Database Sql bernama ecommerce.sql di dalam folder 
+
+# Masih Kurang di bagian Handling After Payment
