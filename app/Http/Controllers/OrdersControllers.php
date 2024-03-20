@@ -109,101 +109,143 @@ class OrdersControllers extends Controller
      * Store a newly created resource in storage.
      */
     public function check_out()
-{
-    $response = Http::get('https://fakestoreapi.com/products/');
-    $products = $response->json();
+    {
+        $response = Http::get('https://fakestoreapi.com/products/');
+        $products = $response->json();
 
-    $orders = Orders::where('user_id', Auth::user()->id)
-                    ->where('status', 0)
-                    ->first();
+        $orders = Orders::where('user_id', Auth::user()->id)
+                        ->where('status', 0)
+                        ->first();
 
-    $details_orders = [];
-    $filtered_products = [];
+        $details_orders = [];
+        $filtered_products = [];
+        $snapToken = null;
 
-    if ($orders) {
-        $details_orders = DetailOrders::where('order_id', $orders->id)->get();
+        if ($orders) {
+            $details_orders = DetailOrders::where('order_id', $orders->id)->get();
 
-        if ($details_orders->isNotEmpty()) {
-            $product_ids = $details_orders->pluck('product_id')->toArray();
+            if ($details_orders->isNotEmpty()) {
+                $product_ids = $details_orders->pluck('product_id')->toArray();
 
-            $filtered_products = collect($products)->whereIn('id', $product_ids)->all();
+                $filtered_products = collect($products)->whereIn('id', $product_ids)->all();
+            }
+
+            Config::$serverKey = env('MIDTRANS_SERVER_KEY');
+            Config::$clientKey = env('MIDTRANS_CLIENT_KEY');
+            Config::$isProduction = !env('MIDTRANS_IS_SANDBOX');
+            Config::$isSanitized = true;
+            Config::$is3ds = true;
+
+            $enabled_payments = [
+                'bank_transfer' => [
+                    'banks' => ['bca', 'permata'],
+                    'va_number' => true,
+                ],
+            ];
+
+            $transactionDetails = [
+                'order_id' => $orders->id,
+                'gross_amount' => $orders->total_price,
+            ];
+
+            $customerDetail = [
+                'first_name' => Auth::user()->name,
+                'email' => Auth::user()->email,
+                'phone' => '000000000',
+            ];
+
+            $params = array(
+                'transaction_details' => $transactionDetails,
+                'customer_details' => $customerDetail,
+                'enabled_payments' => $enabled_payments,
+            );
+
+            $snapToken = Snap::getSnapToken($params);
         }
+
+        return view('products.check_out', compact('orders', 'details_orders', 'filtered_products', 'snapToken'));
     }
 
-    return view('products.check_out', compact('orders', 'details_orders', 'filtered_products'));
-}
 
 
 
     /**
      * Display the specified resource.
      */
+    public function konfirmasi(Request $request)
+    {
+
+    $signature_key = env('MIDTRANS_SERVER_KEY');
+    $notification = json_decode($request->getContent(), true);
+    $expected_signature = hash('sha512', $notification['order_id'] . $notification['status_code'] . $notification['gross_amount'] . $signature_key);
+
+    if ($expected_signature !== $notification['signature_key']) {
+        return response()->json(['error' => 'Invalid signature'], 400);
+    }
+
+    $order_id = $notification['order_id'];
+    $status_code = $notification['status_code'];
+
+    if ($status_code == '200') {
+        $order = Orders::find($order_id);
+        if ($order) {
+            $order->status = 1;
+            $order->save();
+        }
+    }
+
+    return response()->json(['message' => 'Webhook received'], 200);
+
+    }
+
+
     // public function konfirmasi()
     // {
-    //     $user = User::where('id', Auth::user()->id)->first();
+    //     // Konfigurasi Midtrans
+    //     Config::$serverKey = env('MIDTRANS_SERVER_KEY');
+    //     Config::$clientKey = env('MIDTRANS_CLIENT_KEY');
+    //     Config::$isProduction = !env('MIDTRANS_IS_SANDBOX');
+    //     Config::$isSanitized = true;
+    //     Config::$is3ds = true;
 
-    //     // if(empty($user->alamat))
-    //     // {
-    //     //     Alert::error('Identitasi Harap dilengkapi', 'Error');
-    //     //     return redirect('profile');
-    //     // }
+    //     // Ambil data pesanan yang akan dikonfirmasi
+    //     $order = Orders::where('user_id', Auth::user()->id)
+    //                     ->where('status', 0)
+    //                     ->first();
 
-    //     // if(empty($user->nohp))
-    //     // {
-    //     //     Alert::error('Identitasi Harap dilengkapi', 'Error');
-    //     //     return redirect('profile');
-    //     // }
+    //     // Periksa apakah ada pesanan yang belum dikonfirmasi
+    //     if (!$order) {
+    //         // Jika tidak ada pesanan yang belum dikonfirmasi, tampilkan pesan error
+    //         return redirect()->back()->with('error', 'Tidak ada pesanan yang harus dikonfirmasi.');
+    //     }
 
-    //     $order = Orders::where('user_id', Auth::user()->id)->where('status',0)->first();
-    //     $order_id = $order->id;
+    //     // Ubah status pesanan menjadi "Sedang Dikonfirmasi" (misalnya, status = 1)
     //     $order->status = 1;
     //     $order->update();
 
-    //     Alert::success('Pesanan Sukses Check Out Silahkan Lanjutkan Proses Pembayaran', 'Success');
-    //     return redirect('history/'.$order_id);
+    //     // Data transaksi untuk Midtrans
+    //     $transactionDetails = [
+    //         'order_id' => $order->id,
+    //         'gross_amount' => $order->total_price,
+    //     ];
 
+
+
+    //     $params = array(
+    //         'transaction_details' => $transactionDetails,
+    //         'customer_details' => array(
+    //             'first_name' => 'budi',
+    //             'last_name' => 'pratama',
+    //             'email' => 'budi.pra@example.com',
+    //             'phone' => '08111222333',
+    //         ),
+    //     );
+
+
+    //     $snapToken = Snap::getSnapToken($params);
+    //     // dd($snapToken);
+    //     return view('products.check_out', compact('order', 'snapToken'));
     // }
-
-
-    public function konfirmasi()
-    {
-        // Konfigurasi Midtrans
-        Config::$serverKey = env('MIDTRANS_SERVER_KEY');
-        Config::$clientKey = env('MIDTRANS_CLIENT_KEY');
-        Config::$isProduction = !env('MIDTRANS_IS_SANDBOX');
-
-        // Ambil data pesanan yang akan dikonfirmasi
-        $order = Orders::where('user_id', Auth::user()->id)
-                        ->where('status', 0)
-                        ->first();
-
-        // Periksa apakah ada pesanan yang belum dikonfirmasi
-        if (!$order) {
-            // Jika tidak ada pesanan yang belum dikonfirmasi, tampilkan pesan error
-            return redirect()->back()->with('error', 'Tidak ada pesanan yang harus dikonfirmasi.');
-        }
-
-        // Ubah status pesanan menjadi "Sedang Dikonfirmasi" (misalnya, status = 1)
-        $order->status = 1;
-        $order->update();
-
-        // Data transaksi untuk Midtrans
-        $transactionDetails = [
-            'order_id' => $order->id,
-            'gross_amount' => $order->total_price,
-        ];
-
-        try {
-            // Buat transaksi Snap menggunakan SDK Midtrans
-            $snapToken = Snap::getSnapToken($transactionDetails);
-
-            // Redirect ke halaman pembayaran menggunakan snapToken
-            return redirect()->away(Snap::getSnapUrl($snapToken));
-        } catch (\Exception $e) {
-            // Tangani kesalahan saat membuat transaksi Snap
-            return redirect()->back()->with('error', 'Terjadi kesalahan saat membuat transaksi pembayaran.');
-        }
-    }
 
 
 
